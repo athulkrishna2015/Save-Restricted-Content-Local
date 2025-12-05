@@ -1,0 +1,34 @@
+# Environments
+.env
+.venv
+venv/
+env/
+ENV/
+
+# Session files (Contains sensitive login info)
+*.session
+*.session-journal
+
+# Database
+database/users.json
+*.db
+*.sqlite
+
+# Logs and Temporary files
+*.log
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.DS_Store
+Thumbs.db
+
+# Downloaded content
+downloads/
+
+# Bot status files
+*status.txt
+
+# IDE settings
+.vscode/
+.idea/
