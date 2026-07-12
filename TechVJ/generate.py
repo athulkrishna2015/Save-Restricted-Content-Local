@@ -2,6 +2,7 @@
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
 # Ask Doubt on telegram @KingVJ01
 
+import asyncio
 import traceback
 from pyrogram.types import Message
 from pyrogram import Client, filters
@@ -13,7 +14,8 @@ from pyrogram.errors import (
     PhoneCodeInvalid,
     PhoneCodeExpired,
     SessionPasswordNeeded,
-    PasswordHashInvalid
+    PasswordHashInvalid,
+    FloodWait
 )
 from config import API_ID, API_HASH
 from database.db import db
@@ -83,7 +85,12 @@ async def main(bot: Client, message: Message):
         except PasswordHashInvalid:
             await two_step_msg.reply('**Invalid Password Provided**')
             return
-    string_session = await client.export_session_string()
+    try:
+        string_session = await client.export_session_string()
+    except FloodWait as e:
+        await message.reply(f"**Telegram limit reached (FloodWait). Waiting for {e.value} seconds...**")
+        await asyncio.sleep(e.value)
+        string_session = await client.export_session_string()
     await client.disconnect()
     if len(string_session) < SESSION_STRING_SIZE:
         return await message.reply('<b>invalid session sring</b>')
