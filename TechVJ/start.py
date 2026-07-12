@@ -3,6 +3,7 @@
 # Ask Doubt on telegram @KingVJ01
 
 import os
+import json
 import asyncio 
 import pyrogram
 from pyrogram import Client, filters, enums
@@ -12,6 +13,46 @@ from config import API_ID, API_HASH, ERROR_MESSAGE, LOGIN_SYSTEM, STRING_SESSION
 from database.db import db
 from TechVJ.strings import HELP_TXT
 from bot import TechVJUser
+
+# ── Resume State Helpers ──────────────────────────────────────────────────────
+RESUME_FILE = "database/resume_state.json"
+
+def save_resume_state(user_id: int, url: str, current_msgid: int, to_id: int):
+    """Persist the current batch progress so it can be resumed after a crash."""
+    try:
+        data = {}
+        if os.path.exists(RESUME_FILE):
+            with open(RESUME_FILE, "r") as f:
+                data = json.load(f)
+        data[str(user_id)] = {"url": url, "current_msgid": current_msgid, "to_id": to_id}
+        with open(RESUME_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception:
+        pass
+
+def load_resume_state(user_id: int):
+    """Load any saved batch state for the user. Returns dict or None."""
+    try:
+        if os.path.exists(RESUME_FILE):
+            with open(RESUME_FILE, "r") as f:
+                data = json.load(f)
+            return data.get(str(user_id))
+    except Exception:
+        pass
+    return None
+
+def clear_resume_state(user_id: int):
+    """Clear saved state once a batch finishes successfully."""
+    try:
+        if os.path.exists(RESUME_FILE):
+            with open(RESUME_FILE, "r") as f:
+                data = json.load(f)
+            data.pop(str(user_id), None)
+            with open(RESUME_FILE, "w") as f:
+                json.dump(data, f, indent=4)
+    except Exception:
+        pass
+# ─────────────────────────────────────────────────────────────────────────────
 
 class batch_temp(object):
     IS_BATCH = {}
@@ -89,9 +130,22 @@ async def send_help(client: Client, message: Message):
 @Client.on_message(filters.command(["cancel"]))
 async def send_cancel(client: Client, message: Message):
     batch_temp.IS_BATCH[message.from_user.id] = True
+    clear_resume_state(message.from_user.id)
     await client.send_message(
         chat_id=message.chat.id, 
         text="**Batch Successfully Cancelled.**"
+    )
+
+# resume command
+@Client.on_message(filters.command(["resume"]))
+async def send_resume(client: Client, message: Message):
+    state = load_resume_state(message.from_user.id)
+    if state is None:
+        return await message.reply("**No pending batch found to resume.**")
+    await message.reply(
+        f"**Resuming batch from Msg ID `{state['current_msgid']}` to `{state['to_id']}`...**\n"
+        f"Send the same link again starting from ID `{state['current_msgid']}` to resume.\n\n"
+        f"Or just resend:**\n`{state['url']}`**"
     )
 
 @Client.on_message(filters.text & filters.private)
@@ -146,43 +200,53 @@ async def save(client: Client, message: Message):
         batch_temp.IS_BATCH[message.from_user.id] = False
         for msgid in range(fromID, toID+1):
             if batch_temp.IS_BATCH.get(message.from_user.id): break
-            print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID}")
-            
-            # private
-            if "https://t.me/c/" in message.text:
-                chatid = int("-100" + datas[4])
-                try:
-                    await handle_private(client, acc, message, chatid, msgid)
-                except Exception as e:
-                    if ERROR_MESSAGE == True:
-                        await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
-    
-            # bot
-            elif "https://t.me/b/" in message.text:
-                username = datas[4]
-                try:
-                    await handle_private(client, acc, message, username, msgid)
-                except Exception as e:
-                    if ERROR_MESSAGE == True:
-                        await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
-            
-            # public
-            else:
-                username = datas[3]
 
+            # Save resume state before processing each message
+            save_resume_state(message.from_user.id, message.text, msgid, toID)
+            print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID}")
+
+            # Retry logic: up to 3 attempts with exponential backoff
+            for attempt in range(1, 4):
                 try:
-                    msg = await client.get_messages(username, msgid)
-                except UsernameNotOccupied: 
-                    await client.send_message(message.chat.id, "The username is not occupied by anyone", reply_to_message_id=message.id)
-                    return
-                try:
-                    await client.copy_message(message.chat.id, msg.chat.id, msg.id, reply_to_message_id=message.id)
-                except:
-                    try:    
-                        await handle_private(client, acc, message, username, msgid)               
-                    except Exception as e:
-                        if ERROR_MESSAGE == True:
-                            await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
+                    # private
+                    if "https://t.me/c/" in message.text:
+                        chatid = int("-100" + datas[4])
+                        await handle_private(client, acc, message, chatid, msgid)
+
+                    # bot
+                    elif "https://t.me/b/" in message.text:
+                        username = datas[4]
+                        await handle_private(client, acc, message, username, msgid)
+
+                    # public
+                    else:
+                        username = datas[3]
+                        try:
+                            msg = await client.get_messages(username, msgid)
+                        except UsernameNotOccupied:
+                            await client.send_message(message.chat.id, "The username is not occupied by anyone", reply_to_message_id=message.id)
+                            return
+                        try:
+                            await client.copy_message(message.chat.id, msg.chat.id, msg.id, reply_to_message_id=message.id)
+                        except:
+                            await handle_private(client, acc, message, username, msgid)
+                    break  # Success — exit retry loop
+
+                except FloodWait as fw:
+                    print(f"[FloodWait] Sleeping {fw.value}s on msg {msgid}")
+                    await asyncio.sleep(fw.value)
+                except (OSError, asyncio.TimeoutError, ConnectionError) as e:
+                    wait = attempt * 5
+                    print(f"[NetworkError] Attempt {attempt}/3 on msg {msgid}: {e}. Retrying in {wait}s...")
+                    if attempt == 3:
+                        if ERROR_MESSAGE:
+                            await client.send_message(message.chat.id, f"⚠️ Network error on msg `{msgid}` after 3 retries. Use /resume to continue.", reply_to_message_id=message.id)
+                    else:
+                        await asyncio.sleep(wait)
+                except Exception as e:
+                    if ERROR_MESSAGE:
+                        await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
+                    break  # Non-network error, skip retry
 
             # wait time
             await asyncio.sleep(WAITING_TIME)
@@ -190,8 +254,10 @@ async def save(client: Client, message: Message):
             try:
                 await acc.disconnect()
             except:
-                pass                				
+                pass
         batch_temp.IS_BATCH[message.from_user.id] = True
+        clear_resume_state(message.from_user.id)  # Batch done — clear saved state
+        print(f"[Done] User: {message.from_user.id} | Batch completed up to msg {toID}")
 
 
 # handle private
