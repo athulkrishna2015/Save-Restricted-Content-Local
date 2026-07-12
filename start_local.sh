@@ -36,5 +36,17 @@ mkdir -p database
 # Note: DB_URI is no longer needed as the bot now uses a local JSON file.
 # =========================================================================
 
+# Activating virtual environment if it exists
+if [ -d ".venv" ]; then
+    echo "Activating virtual environment (.venv)..."
+    source .venv/bin/activate
+elif [ -d "venv" ]; then
+    echo "Activating virtual environment (venv)..."
+    source venv/bin/activate
+fi
+
+# Gracefully handle Ctrl+C / SIGINT and SIGTERM
+trap "echo -e '\nStopping bot gracefully...'; exit 0" SIGINT SIGTERM
+
 # Run the bot
-python3 bot.py
+python3 -u bot.py

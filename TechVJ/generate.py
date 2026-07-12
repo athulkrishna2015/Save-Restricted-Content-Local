@@ -44,7 +44,7 @@ async def main(bot: Client, message: Message):
         try:
             api_id = int(api_id_msg.text)
         except ValueError:
-            await api_id_msg.reply("**Api id must be an integer, start your process again by /login**", quote=True, reply_markup=InlineKeyboardMarkup(gen_button))
+            await api_id_msg.reply("**Api id must be an integer, start your process again by /login**", quote=True)
             return
         api_hash_msg = await bot.ask(user_id, "**Now Send Me Your API HASH**", filters=filters.text)
         api_hash = api_hash_msg.text
