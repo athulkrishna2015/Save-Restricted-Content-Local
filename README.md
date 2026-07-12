@@ -44,12 +44,17 @@ With your virtual environment activated, install all required Python packages:
 ```bash
 pip install -r requirements.txt
 ```
-  1 python3 -m venv .venv
-   2 source .venv/bin/activate
-   3 pip install -r requirements.txt
-   4 chmod +x start_local.sh
-   5 ./start_local.sh
 
+### Python 3.12+ / 3.14 Compatibility Note
+On newer Python versions (such as Python 3.12, 3.13, or 3.14), Pyrogram/Pyrofork may raise `RuntimeError: There is no current event loop in thread 'MainThread'`. 
+To resolve this, we ensure an active event loop is set in `bot.py` before importing Pyrogram:
+```python
+import asyncio
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+```
 
 ### 3. Configure Environment Variables
 

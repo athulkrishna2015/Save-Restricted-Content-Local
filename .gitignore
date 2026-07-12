@@ -32,3 +32,7 @@ downloads/
 # IDE settings
 .vscode/
 .idea/
+
+# Scratch/command files
+run cmd.txt
+

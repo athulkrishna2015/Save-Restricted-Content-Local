@@ -5,6 +5,12 @@
 from dotenv import load_dotenv
 load_dotenv() # Load environment variables from .env file
 
+import asyncio
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 from pyrogram import Client
 from config import API_ID, API_HASH, BOT_TOKEN, STRING_SESSION, LOGIN_SYSTEM
 
