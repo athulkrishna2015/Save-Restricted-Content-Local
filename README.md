@@ -77,18 +77,20 @@ LOGIN_SYSTEM=True                         # Set True or False as per your need (
 ```
 **Note:** `DB_URI` is no longer required as the bot now uses a local JSON file (`database/users.json`) for data storage, eliminating the need for MongoDB.
 
-### 4. Running the Bot
-
 Once the setup is complete, you can run the bot using the provided script:
 
 ```bash
 # Ensure the script is executable
 chmod +x start_local.sh
 
-# Run the bot
+# Run the bot (automatically activates .venv and handles Ctrl+C gracefully)
 ./start_local.sh
 ```
-This script will start the bot, and it will use the local JSON database `database/users.json` to store user sessions and other data.
+This script will:
+- Automatically activate the `.venv` virtual environment if it exists.
+- Start the bot using unbuffered Python output so logs appear in real time.
+- Handle `Ctrl+C` gracefully with a clean shutdown message.
+- Use the local JSON database `database/users.json` to store user sessions and other data.
 
 ---
 
@@ -114,7 +116,8 @@ These are the variables the bot uses, now loaded from your `.env` file:
 -   `/help`: Get information on how to use the bot.
 -   `/login`: Log in your Telegram String Session via the bot.
 -   `/logout`: Log out your current session.
--   `/cancel`: Cancel any ongoing task.
+-   `/cancel`: Cancel any ongoing task and clear saved resume state.
+-   `/resume`: Show the last saved batch state and the link to resume from after a crash.
 -   `/broadcast`: Broadcast a message to all users (Admin Only).
 
 ---
@@ -152,6 +155,31 @@ https://t.me/c/xxxx/101 - 120
 _Note that spaces in between don't matter._
 
 ---
+
+## Crash Recovery & Network Resilience
+
+This bot includes built-in crash recovery and network resilience features:
+
+### Auto-Retry on Network Errors
+If a network error (`ConnectionError`, `TimeoutError`, etc.) occurs while processing a message, the bot will automatically retry up to **3 times** with increasing delays (5s, 10s, 15s) before giving up and notifying you.
+
+### FloodWait Handling
+If Telegram issues a FloodWait rate-limit, the bot will automatically sleep for the required duration and then continue.
+
+### Crash Recovery (Resume State)
+The bot saves the current batch progress to `database/resume_state.json` after every message. If the bot crashes or the network goes down mid-batch:
+1. Restart the bot with `./start_local.sh`.
+2. Send `/resume` to the bot on Telegram.
+3. The bot will tell you the exact message ID to resume from and show you the URL to resend.
+
+### Terminal Logging
+During batch processing, the terminal prints real-time progress so you always know where to resume:
+```
+[Processing] User: 123456789 | Msg ID: 1042 / 1100
+[NetworkError] Attempt 1/3 on msg 1042: Connection reset. Retrying in 5s...
+[FloodWait] Sleeping 15s on msg 1043
+[Done] User: 123456789 | Batch completed up to msg 1100
+```
 
 ## Credits
 
