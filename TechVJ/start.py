@@ -146,6 +146,7 @@ async def save(client: Client, message: Message):
         batch_temp.IS_BATCH[message.from_user.id] = False
         for msgid in range(fromID, toID+1):
             if batch_temp.IS_BATCH.get(message.from_user.id): break
+            print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID}")
             
             # private
             if "https://t.me/c/" in message.text:
@@ -208,6 +209,8 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         chat = message.chat.id
     if batch_temp.IS_BATCH.get(message.from_user.id): return 
     if "Text" == msg_type:
+        if not msg.text or not msg.text.strip():
+            return  # Skip empty text messages to avoid MESSAGE_EMPTY error
         try:
             await client.send_message(chat, msg.text, entities=msg.entities, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
             return 
