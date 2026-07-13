@@ -11,7 +11,7 @@ import pyrogram
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated, UserAlreadyParticipant, InviteHashExpired, UsernameNotOccupied
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message 
-from config import API_ID, API_HASH, ERROR_MESSAGE, LOGIN_SYSTEM, STRING_SESSION, CHANNEL_ID, WAITING_TIME
+from config import API_ID, API_HASH, ERROR_MESSAGE, LOGIN_SYSTEM, STRING_SESSION, CHANNEL_ID, WAITING_TIME, MAX_FILE_SIZE
 from database.db import db
 from TechVJ.strings import HELP_TXT
 from bot import TechVJUser
@@ -80,14 +80,19 @@ async def downstatus(client, statusfile, message, chat):
 
         await asyncio.sleep(3)
       
+    last_txt = ""
     while os.path.exists(statusfile):
         with open(statusfile, "r") as downread:
             txt = downread.read()
-        try:
-            await client.edit_message_text(chat, message.id, f"**Downloaded:** **{txt}**")
-            await asyncio.sleep(10)
-        except:
-            await asyncio.sleep(5)
+        if txt != last_txt:
+            try:
+                await client.edit_message_text(chat, message.id, f"**Downloaded:** **{txt}**")
+                last_txt = txt
+                await asyncio.sleep(10)
+            except:
+                await asyncio.sleep(5)
+        else:
+            await asyncio.sleep(2)
 
 
 # upload status
@@ -97,14 +102,19 @@ async def upstatus(client, statusfile, message, chat):
             break
 
         await asyncio.sleep(3)      
+    last_txt = ""
     while os.path.exists(statusfile):
         with open(statusfile, "r") as upread:
             txt = upread.read()
-        try:
-            await client.edit_message_text(chat, message.id, f"**Uploaded:** **{txt}**")
-            await asyncio.sleep(10)
-        except:
-            await asyncio.sleep(5)
+        if txt != last_txt:
+            try:
+                await client.edit_message_text(chat, message.id, f"**Uploaded:** **{txt}**")
+                last_txt = txt
+                await asyncio.sleep(10)
+            except:
+                await asyncio.sleep(5)
+        else:
+            await asyncio.sleep(2)
 
 
 # progress writer
@@ -218,257 +228,262 @@ async def save(client: Client, message: Message):
             acc = TechVJUser
 				
         batch_temp.IS_BATCH[message.from_user.id] = False
-        should_break = False
-        for msgid in range(fromID, toID+1):
-            if batch_temp.IS_BATCH.get(message.from_user.id): break
+        queue = asyncio.Queue(maxsize=1)
+        uploader_state = {"should_break": False, "toID": toID}
 
-            # Save resume state before processing each message
-            save_resume_state(message.from_user.id, message.text, msgid, toID)
-            print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID}")
+        # Start downloader and uploader tasks
+        downloader_task = asyncio.create_task(batch_downloader(client, acc, message, fromID, toID, queue, datas, uploader_state))
+        uploader_task = asyncio.create_task(batch_uploader(client, acc, message, queue, uploader_state))
 
-            # Process the message with retries on network error, and infinite retry on FloodWait
-            attempt = 1
-            while attempt <= 3:
-                if batch_temp.IS_BATCH.get(message.from_user.id):
-                    should_break = True
-                    break
-                try:
-                    # private
-                    if "https://t.me/c/" in message.text:
-                        chatid = int("-100" + datas[4])
-                        await handle_private(client, acc, message, chatid, msgid)
+        # Wait for both tasks to complete
+        await asyncio.gather(downloader_task, uploader_task)
 
-                    # bot
-                    elif "https://t.me/b/" in message.text:
-                        username = datas[4]
-                        await handle_private(client, acc, message, username, msgid)
+        # Clean up queue if any items left due to early break
+        while not queue.empty():
+            item = queue.get_nowait()
+            if item:
+                if "file" in item and item["file"] and os.path.exists(item["file"]):
+                    try: os.remove(item["file"])
+                    except: pass
+                if "ph_path" in item and item["ph_path"] and os.path.exists(item["ph_path"]):
+                    try: os.remove(item["ph_path"])
+                    except: pass
+            queue.task_done()
 
-                    # public
-                    else:
-                        username = datas[3]
-                        try:
-                            msg = await client.get_messages(username, msgid)
-                        except UsernameNotOccupied:
-                            await client.send_message(message.chat.id, "The username is not occupied by anyone", reply_to_message_id=message.id)
-                            should_break = True
-                            break
-                        try:
-                            await client.copy_message(message.chat.id, msg.chat.id, msg.id, reply_to_message_id=message.id)
-                        except:
-                            await handle_private(client, acc, message, username, msgid)
-                    break  # Success — exit retry loop
+        should_break = uploader_state["should_break"]
 
-                except FloodWait as fw:
-                    print(f"[FloodWait] Sleeping {fw.value}s on msg {msgid}")
-                    if ERROR_MESSAGE:
-                        await client.send_message(message.chat.id, f"⏳ Rate limit reached (FloodWait). Sleeping for {fw.value}s before retrying Msg ID `{msgid}`...", reply_to_message_id=message.id)
-                    await asyncio.sleep(fw.value)
-                    # Note: Do not increment attempt count, retry immediately
-                    continue
-                except (OSError, asyncio.TimeoutError, ConnectionError) as e:
-                    wait = attempt * 5
-                    print(f"[NetworkError] Attempt {attempt}/3 on msg {msgid}: {e}. Retrying in {wait}s...")
-                    if attempt == 3:
-                        if ERROR_MESSAGE:
-                            await client.send_message(message.chat.id, f"⚠️ Network error on msg `{msgid}` after 3 retries: `{e}`.\nBatch paused. Use /resume to continue.", reply_to_message_id=message.id)
-                        should_break = True
-                        break
-                    else:
-                        await asyncio.sleep(wait)
-                        attempt += 1
-                except Exception as e:
-                    if str(e) == "Skipped by user":
-                        print(f"[Skipped] Msg ID: {msgid} by user request")
-                        batch_temp.SKIP_CURRENT = False
-                        break
-                    if ERROR_MESSAGE:
-                        await client.send_message(message.chat.id, f"❌ Error on msg `{msgid}`: `{e}`.\nBatch paused. Use /resume to continue.", reply_to_message_id=message.id)
-                    should_break = True
-                    break
-            
-            if should_break:
-                break
-
-            # wait time
-            await asyncio.sleep(WAITING_TIME)
         if LOGIN_SYSTEM == True:
             try:
                 await acc.disconnect()
             except:
                 pass
         batch_temp.IS_BATCH[message.from_user.id] = True
-        if not should_break:
+        if not should_break and not batch_temp.IS_BATCH.get(message.from_user.id):
             clear_resume_state(message.from_user.id)  # Batch done — clear saved state
             print(f"[Done] User: {message.from_user.id} | Batch completed up to msg {toID}")
         else:
-            print(f"[Paused] User: {message.from_user.id} | Batch paused at msg {msgid}")
+            print(f"[Paused] User: {message.from_user.id} | Batch paused")
 
 
-def get_file_size(msg: Message):
-    try:
-        if msg.document: return msg.document.file_size
-    except: pass
-    try:
-        if msg.video: return msg.video.file_size
-    except: pass
-    try:
-        if msg.audio: return msg.audio.file_size
-    except: pass
-    try:
-        if msg.photo: return msg.photo.file_size
-    except: pass
-    try:
-        if msg.voice: return msg.voice.file_size
-    except: pass
-    try:
-        if msg.animation: return msg.animation.file_size
-    except: pass
-    try:
-        if msg.sticker: return msg.sticker.file_size
-    except: pass
-    return None
+async def batch_downloader(client: Client, acc, message: Message, fromID: int, toID: int, queue: asyncio.Queue, datas: list, uploader_state: dict):
+    for msgid in range(fromID, toID+1):
+        if batch_temp.IS_BATCH.get(message.from_user.id) or uploader_state.get("should_break"):
+            break
 
-# handle private
-async def handle_private(client: Client, acc, message: Message, chatid: int, msgid: int):
-    msg: Message = await acc.get_messages(chatid, msgid)
-    if msg.empty: return 
-    msg_type = get_message_type(msg)
-    if not msg_type: return 
+        # Save resume state before downloading each message
+        save_resume_state(message.from_user.id, message.text, msgid, toID)
 
-    size = get_file_size(msg)
-    if size:
-        size_mb = size / (1024 * 1024)
-        print(f"[Downloading] Msg ID: {msgid} | Type: {msg_type} | Size: {size_mb:.1f} MB")
-    else:
-        print(f"[Downloading] Msg ID: {msgid} | Type: {msg_type}")
+        # Process the message with retries on network error, and infinite retry on FloodWait
+        attempt = 1
+        while attempt <= 3:
+            if batch_temp.IS_BATCH.get(message.from_user.id) or uploader_state.get("should_break"):
+                break
+            try:
+                chatid = datas[4] if "https://t.me/c/" in message.text or "https://t.me/b/" in message.text else datas[3]
+                if "https://t.me/c/" in message.text:
+                    chatid = int("-100" + chatid)
+                
+                msg: Message = await acc.get_messages(chatid, msgid)
+                if msg.empty:
+                    print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Empty message (Skipped)")
+                    break
+                
+                msg_type = get_message_type(msg)
+                if not msg_type:
+                    print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Unknown type (Skipped)")
+                    break
 
-    if CHANNEL_ID:
-        try:
-            chat = int(CHANNEL_ID)
-        except:
-            chat = message.chat.id
-    else:
-        chat = message.chat.id
-    if batch_temp.IS_BATCH.get(message.from_user.id): return 
-    if "Text" == msg_type:
-        if not msg.text or not msg.text.strip():
-            return  # Skip empty text messages to avoid MESSAGE_EMPTY error
-        try:
-            await client.send_message(chat, msg.text, entities=msg.entities, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-            return 
-        except Exception as e:
-            if ERROR_MESSAGE == True:
-                await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-            return  
+                size = get_file_size(msg)
+                if size:
+                    size_mb = size / (1024 * 1024)
+                    print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Type: {msg_type} | Size: {size_mb:.1f} MB")
+                    if MAX_FILE_SIZE > 0 and size_mb > MAX_FILE_SIZE:
+                        print(f"[Skipped] Msg ID: {msgid} | File size ({size_mb:.1f} MB) exceeds MAX_FILE_SIZE ({MAX_FILE_SIZE} MB)")
+                        if ERROR_MESSAGE:
+                            await client.send_message(message.chat.id, f"ℹ️ Msg ID `{msgid}` skipped: file size `{size_mb:.1f} MB` exceeds the `{MAX_FILE_SIZE} MB` limit.", reply_to_message_id=message.id)
+                        break
+                else:
+                    print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Type: {msg_type}")
 
-    smsg = await client.send_message(message.chat.id, '**Downloading**', reply_to_message_id=message.id)
-    asyncio.create_task(downstatus(client, f'{message.id}downstatus.txt', smsg, chat))
-    try:
-        file = await acc.download_media(msg, progress=progress, progress_args=[message,"down"])
-        os.remove(f'{message.id}downstatus.txt')
-    except Exception as e:
-        if str(e) == "Skipped by user":
-            raise e
-        if ERROR_MESSAGE == True:
-            await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML) 
-        return await smsg.delete()
-    if batch_temp.IS_BATCH.get(message.from_user.id): return 
-    asyncio.create_task(upstatus(client, f'{message.id}upstatus.txt', smsg, chat))
+                if CHANNEL_ID:
+                    try:
+                        chat = int(CHANNEL_ID)
+                    except:
+                        chat = message.chat.id
+                else:
+                    chat = message.chat.id
 
-    if msg.caption:
-        caption = msg.caption
-    else:
-        caption = None
-    if batch_temp.IS_BATCH.get(message.from_user.id): return 
-            
-    if "Document" == msg_type:
-        try:
-            ph_path = await acc.download_media(msg.document.thumbs[0].file_id)
-        except:
-            ph_path = None
-        
-        try:
-            await client.send_document(chat, file, thumb=ph_path, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])
-        except Exception as e:
-            if str(e) == "Skipped by user":
-                raise e
-            if ERROR_MESSAGE == True:
-                await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-        if ph_path != None: os.remove(ph_path)
-        
+                if "Text" == msg_type:
+                    await queue.put({
+                        "msgid": msgid,
+                        "msg_type": "Text",
+                        "msg": msg,
+                        "chat": chat,
+                        "message": message
+                    })
+                    break
 
-    elif "Video" == msg_type:
-        try:
-            ph_path = await acc.download_media(msg.video.thumbs[0].file_id)
-        except:
-            ph_path = None
-        
-        try:
-            await client.send_video(chat, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])
-        except Exception as e:
-            if str(e) == "Skipped by user":
-                raise e
-            if ERROR_MESSAGE == True:
-                await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-        if ph_path != None: os.remove(ph_path)
+                smsg = await client.send_message(message.chat.id, f'**Downloading Msg ID {msgid}...**', reply_to_message_id=message.id)
+                asyncio.create_task(downstatus(client, f'{message.id}downstatus.txt', smsg, chat))
+                try:
+                    file = await acc.download_media(msg, progress=progress, progress_args=[message,"down"])
+                    if os.path.exists(f'{message.id}downstatus.txt'):
+                        os.remove(f'{message.id}downstatus.txt')
+                except Exception as e:
+                    if str(e) == "Skipped by user":
+                        raise e
+                    if ERROR_MESSAGE == True:
+                        await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML) 
+                    await smsg.delete()
+                    break
 
-    elif "Animation" == msg_type:
-        try:
-            await client.send_animation(chat, file, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-        except Exception as e:
-            if str(e) == "Skipped by user":
-                raise e
-            if ERROR_MESSAGE == True:
-                await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-        
-    elif "Sticker" == msg_type:
-        try:
-            await client.send_sticker(chat, file, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-        except Exception as e:
-            if str(e) == "Skipped by user":
-                raise e
-            if ERROR_MESSAGE == True:
-                await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)     
+                # Download thumbnail if any
+                ph_path = None
+                if "Document" == msg_type and msg.document.thumbs:
+                    try: ph_path = await acc.download_media(msg.document.thumbs[0].file_id)
+                    except: pass
+                elif "Video" == msg_type and msg.video.thumbs:
+                    try: ph_path = await acc.download_media(msg.video.thumbs[0].file_id)
+                    except: pass
+                elif "Audio" == msg_type and msg.audio.thumbs:
+                    try: ph_path = await acc.download_media(msg.audio.thumbs[0].file_id)
+                    except: pass
 
-    elif "Voice" == msg_type:
-        try:
-            await client.send_voice(chat, file, caption=caption, caption_entities=msg.caption_entities, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])
-        except Exception as e:
-            if str(e) == "Skipped by user":
-                raise e
-            if ERROR_MESSAGE == True:
-                await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+                await queue.put({
+                    "msgid": msgid,
+                    "msg_type": msg_type,
+                    "msg": msg,
+                    "file": file,
+                    "ph_path": ph_path,
+                    "chat": chat,
+                    "smsg": smsg,
+                    "message": message
+                })
+                break
 
-    elif "Audio" == msg_type:
-        try:
-            ph_path = await acc.download_media(msg.audio.thumbs[0].file_id)
-        except:
-            ph_path = None
+            except FloodWait as fw:
+                print(f"[FloodWait] Sleeping {fw.value}s on msg {msgid}")
+                if ERROR_MESSAGE:
+                    await client.send_message(message.chat.id, f"⏳ Rate limit reached (FloodWait). Sleeping for {fw.value}s before retrying Msg ID `{msgid}`...", reply_to_message_id=message.id)
+                await asyncio.sleep(fw.value)
+                continue
+            except (OSError, asyncio.TimeoutError, ConnectionError) as e:
+                wait = attempt * 5
+                print(f"[NetworkError] Attempt {attempt}/3 on msg {msgid}: {e}. Retrying in {wait}s...")
+                if attempt == 3:
+                    if ERROR_MESSAGE:
+                        await client.send_message(message.chat.id, f"⚠️ Network error on msg `{msgid}` after 3 retries: `{e}`.\nBatch paused.", reply_to_message_id=message.id)
+                    uploader_state["should_break"] = True
+                    break
+                else:
+                    await asyncio.sleep(wait)
+                    attempt += 1
+            except Exception as e:
+                if str(e) == "Skipped by user":
+                    print(f"[Skipped] Msg ID: {msgid} by user request")
+                    batch_temp.SKIP_CURRENT = False
+                    break
+                if ERROR_MESSAGE:
+                    await client.send_message(message.chat.id, f"❌ Error on msg `{msgid}`: `{e}`.\nBatch paused.", reply_to_message_id=message.id)
+                uploader_state["should_break"] = True
+                break
 
-        try:
-            await client.send_audio(chat, file, thumb=ph_path, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])   
-        except Exception as e:
-            if str(e) == "Skipped by user":
-                raise e
-            if ERROR_MESSAGE == True:
-                await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-        
-        if ph_path != None: os.remove(ph_path)
-
-    elif "Photo" == msg_type:
-        try:
-            await client.send_photo(chat, file, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-        except Exception as e:
-            if str(e) == "Skipped by user":
-                raise e
-            if ERROR_MESSAGE == True:
-                await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+        # wait time
+        await asyncio.sleep(WAITING_TIME)
     
-    if os.path.exists(f'{message.id}upstatus.txt'): 
-        os.remove(f'{message.id}upstatus.txt')
-    if file and os.path.exists(file):
-        os.remove(file)
-    await client.delete_messages(message.chat.id,[smsg.id])
+    await queue.put(None) # Sentinel
+
+
+async def batch_uploader(client: Client, acc, message: Message, queue: asyncio.Queue, uploader_state: dict):
+    while True:
+        if batch_temp.IS_BATCH.get(message.from_user.id) or uploader_state.get("should_break"):
+            break
+
+        item = await queue.get()
+        if item is None:
+            queue.task_done()
+            break
+
+        msgid = item["msgid"]
+        msg_type = item["msg_type"]
+        msg = item["msg"]
+        chat = item["chat"]
+        
+        uploaded = False
+        while not uploaded:
+            if batch_temp.IS_BATCH.get(message.from_user.id) or uploader_state.get("should_break"):
+                break
+            try:
+                if msg_type == "Text":
+                    if not msg.text or not msg.text.strip():
+                        uploaded = True
+                        continue
+                    await client.send_message(chat, msg.text, entities=msg.entities, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+                    uploaded = True
+                    continue
+
+                file = item["file"]
+                ph_path = item["ph_path"]
+                smsg = item["smsg"]
+
+                # Save resume state for upload phase
+                save_resume_state(message.from_user.id, message.text, msgid, uploader_state["toID"])
+
+                # Setup upstatus task
+                asyncio.create_task(upstatus(client, f'{message.id}upstatus.txt', smsg, chat))
+                caption = msg.caption if msg.caption else None
+
+                print(f"[Uploading] Msg ID: {msgid} | Type: {msg_type}")
+
+                if "Document" == msg_type:
+                    await client.send_document(chat, file, thumb=ph_path, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])
+                elif "Video" == msg_type:
+                    await client.send_video(chat, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])
+                elif "Animation" == msg_type:
+                    await client.send_animation(chat, file, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+                elif "Sticker" == msg_type:
+                    await client.send_sticker(chat, file, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+                elif "Voice" == msg_type:
+                    await client.send_voice(chat, file, caption=caption, caption_entities=msg.caption_entities, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])
+                elif "Audio" == msg_type:
+                    await client.send_audio(chat, file, thumb=ph_path, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])
+                elif "Photo" == msg_type:
+                    await client.send_photo(chat, file, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+
+                if os.path.exists(f'{message.id}upstatus.txt'):
+                    os.remove(f'{message.id}upstatus.txt')
+                if file and os.path.exists(file):
+                    os.remove(file)
+                if ph_path and os.path.exists(ph_path):
+                    os.remove(ph_path)
+                
+                await client.delete_messages(message.chat.id, [smsg.id])
+                uploaded = True
+
+            except FloodWait as fw:
+                print(f"[FloodWait] Sleeping {fw.value}s during upload of msg {msgid}")
+                await asyncio.sleep(fw.value)
+            except Exception as e:
+                if str(e) == "Skipped by user":
+                    print(f"[Skipped] Msg ID: {msgid} by user request (uploader)")
+                    batch_temp.SKIP_CURRENT = False
+                else:
+                    if ERROR_MESSAGE:
+                        await client.send_message(message.chat.id, f"❌ Upload error on msg `{msgid}`: `{e}`.\nBatch paused.", reply_to_message_id=message.id)
+                    uploader_state["should_break"] = True
+                
+                if "file" in item and item["file"] and os.path.exists(item["file"]):
+                    try: os.remove(item["file"])
+                    except: pass
+                if "ph_path" in item and item["ph_path"] and os.path.exists(item["ph_path"]):
+                    try: os.remove(item["ph_path"])
+                    except: pass
+                if "smsg" in item:
+                    try: await client.delete_messages(message.chat.id, [item["smsg"].id])
+                    except: pass
+                break
+
+        queue.task_done()
 
 
 # get the type of message

@@ -5,6 +5,16 @@
 from dotenv import load_dotenv
 load_dotenv() # Load environment variables from .env file
 
+import os
+import glob
+
+# Clean up leftover progress files from previous runs
+for f in glob.glob("*status.txt"):
+    try:
+        os.remove(f)
+    except:
+        pass
+
 import asyncio
 import signal
 import sys

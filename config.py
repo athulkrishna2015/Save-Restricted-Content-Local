@@ -40,3 +40,7 @@ WAITING_TIME = int(os.environ.get("WAITING_TIME", "10")) # time in seconds
 
 # If You Want Error Message In Your Personal Message Then Turn It True Else If You Don't Want Then Flase
 ERROR_MESSAGE = bool(os.environ.get('ERROR_MESSAGE', True))
+
+# Maximum file size to download/upload in Megabytes (MB). Files larger than this will be skipped.
+# Set to 0 or leave empty for no limit.
+MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", "0"))
