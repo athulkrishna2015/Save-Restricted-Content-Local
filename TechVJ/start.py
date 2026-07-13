@@ -172,10 +172,17 @@ async def send_resume(client: Client, message: Message):
     state = load_resume_state(message.from_user.id)
     if state is None:
         return await message.reply("**No pending batch found to resume.**")
+    url_parts = state['url'].split("/")
+    if state['current_msgid'] == state['to_id']:
+        url_parts[-1] = str(state['current_msgid'])
+    else:
+        url_parts[-1] = f"{state['current_msgid']}-{state['to_id']}"
+    resend_url = "/".join(url_parts)
+
     await message.reply(
         f"**Resuming batch from Msg ID `{state['current_msgid']}` to `{state['to_id']}`...**\n"
         f"Send the same link again starting from ID `{state['current_msgid']}` to resume.\n\n"
-        f"Or just resend:**\n`{state['url']}`**"
+        f"Or just resend:**\n`{resend_url}`**"
     )
 
 @Client.on_message(filters.text & filters.private)

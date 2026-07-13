@@ -18,6 +18,10 @@ for f in glob.glob("*status.txt"):
 import asyncio
 import signal
 import sys
+import logging
+
+# Silence Pyrogram reconnect warnings/info spam
+logging.getLogger("pyrogram").setLevel(logging.ERROR)
 
 def signal_handler(sig, frame):
     print('\nStopping bot and exiting immediately...')
