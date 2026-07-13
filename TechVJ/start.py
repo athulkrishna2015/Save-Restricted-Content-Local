@@ -198,6 +198,7 @@ async def save(client: Client, message: Message):
             acc = TechVJUser
 				
         batch_temp.IS_BATCH[message.from_user.id] = False
+        should_break = False
         for msgid in range(fromID, toID+1):
             if batch_temp.IS_BATCH.get(message.from_user.id): break
 
@@ -205,8 +206,12 @@ async def save(client: Client, message: Message):
             save_resume_state(message.from_user.id, message.text, msgid, toID)
             print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID}")
 
-            # Retry logic: up to 3 attempts with exponential backoff
-            for attempt in range(1, 4):
+            # Process the message with retries on network error, and infinite retry on FloodWait
+            attempt = 1
+            while attempt <= 3:
+                if batch_temp.IS_BATCH.get(message.from_user.id):
+                    should_break = True
+                    break
                 try:
                     # private
                     if "https://t.me/c/" in message.text:
@@ -225,7 +230,8 @@ async def save(client: Client, message: Message):
                             msg = await client.get_messages(username, msgid)
                         except UsernameNotOccupied:
                             await client.send_message(message.chat.id, "The username is not occupied by anyone", reply_to_message_id=message.id)
-                            return
+                            should_break = True
+                            break
                         try:
                             await client.copy_message(message.chat.id, msg.chat.id, msg.id, reply_to_message_id=message.id)
                         except:
@@ -234,19 +240,30 @@ async def save(client: Client, message: Message):
 
                 except FloodWait as fw:
                     print(f"[FloodWait] Sleeping {fw.value}s on msg {msgid}")
+                    if ERROR_MESSAGE:
+                        await client.send_message(message.chat.id, f"⏳ Rate limit reached (FloodWait). Sleeping for {fw.value}s before retrying Msg ID `{msgid}`...", reply_to_message_id=message.id)
                     await asyncio.sleep(fw.value)
+                    # Note: Do not increment attempt count, retry immediately
+                    continue
                 except (OSError, asyncio.TimeoutError, ConnectionError) as e:
                     wait = attempt * 5
                     print(f"[NetworkError] Attempt {attempt}/3 on msg {msgid}: {e}. Retrying in {wait}s...")
                     if attempt == 3:
                         if ERROR_MESSAGE:
-                            await client.send_message(message.chat.id, f"⚠️ Network error on msg `{msgid}` after 3 retries. Use /resume to continue.", reply_to_message_id=message.id)
+                            await client.send_message(message.chat.id, f"⚠️ Network error on msg `{msgid}` after 3 retries: `{e}`.\nBatch paused. Use /resume to continue.", reply_to_message_id=message.id)
+                        should_break = True
+                        break
                     else:
                         await asyncio.sleep(wait)
+                        attempt += 1
                 except Exception as e:
                     if ERROR_MESSAGE:
-                        await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
-                    break  # Non-network error, skip retry
+                        await client.send_message(message.chat.id, f"❌ Error on msg `{msgid}`: `{e}`.\nBatch paused. Use /resume to continue.", reply_to_message_id=message.id)
+                    should_break = True
+                    break
+            
+            if should_break:
+                break
 
             # wait time
             await asyncio.sleep(WAITING_TIME)
@@ -256,8 +273,11 @@ async def save(client: Client, message: Message):
             except:
                 pass
         batch_temp.IS_BATCH[message.from_user.id] = True
-        clear_resume_state(message.from_user.id)  # Batch done — clear saved state
-        print(f"[Done] User: {message.from_user.id} | Batch completed up to msg {toID}")
+        if not should_break:
+            clear_resume_state(message.from_user.id)  # Batch done — clear saved state
+            print(f"[Done] User: {message.from_user.id} | Batch completed up to msg {toID}")
+        else:
+            print(f"[Paused] User: {message.from_user.id} | Batch paused at msg {msgid}")
 
 
 # handle private
