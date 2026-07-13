@@ -45,8 +45,5 @@ elif [ -d "venv" ]; then
     source venv/bin/activate
 fi
 
-# Gracefully handle Ctrl+C / SIGINT and SIGTERM
-trap "echo -e '\nStopping bot gracefully...'; exit 0" SIGINT SIGTERM
-
 # Run the bot
-python3 -u bot.py
+exec python3 -u bot.py

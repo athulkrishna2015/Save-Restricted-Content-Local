@@ -265,6 +265,31 @@ async def save(client: Client, message: Message):
             print(f"[Paused] User: {message.from_user.id} | Batch paused")
 
 
+def get_file_size(msg: Message):
+    try:
+        if msg.document: return msg.document.file_size
+    except: pass
+    try:
+        if msg.video: return msg.video.file_size
+    except: pass
+    try:
+        if msg.audio: return msg.audio.file_size
+    except: pass
+    try:
+        if msg.photo: return msg.photo.file_size
+    except: pass
+    try:
+        if msg.voice: return msg.voice.file_size
+    except: pass
+    try:
+        if msg.animation: return msg.animation.file_size
+    except: pass
+    try:
+        if msg.sticker: return msg.sticker.file_size
+    except: pass
+    return None
+
+
 async def batch_downloader(client: Client, acc, message: Message, fromID: int, toID: int, queue: asyncio.Queue, datas: list, uploader_state: dict):
     for msgid in range(fromID, toID+1):
         if batch_temp.IS_BATCH.get(message.from_user.id) or uploader_state.get("should_break"):

@@ -11,6 +11,7 @@ ENV/
 
 # Database
 database/users.json
+database/resume_state.json
 *.db
 *.sqlite
 
