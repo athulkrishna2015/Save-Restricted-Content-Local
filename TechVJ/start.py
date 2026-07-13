@@ -354,6 +354,8 @@ async def batch_downloader(client: Client, acc, message: Message, fromID: int, t
                     file = await acc.download_media(msg, progress=progress, progress_args=[message,"down"])
                     if os.path.exists(f'{message.id}downstatus.txt'):
                         os.remove(f'{message.id}downstatus.txt')
+                except FloodWait as fw:
+                    raise fw
                 except Exception as e:
                     if str(e) == "Skipped by user":
                         raise e
@@ -388,8 +390,6 @@ async def batch_downloader(client: Client, acc, message: Message, fromID: int, t
 
             except FloodWait as fw:
                 print(f"[FloodWait] Sleeping {fw.value}s on msg {msgid}")
-                if ERROR_MESSAGE:
-                    await client.send_message(message.chat.id, f"⏳ Rate limit reached (FloodWait). Sleeping for {fw.value}s before retrying Msg ID `{msgid}`...", reply_to_message_id=message.id)
                 await asyncio.sleep(fw.value)
                 continue
             except (OSError, asyncio.TimeoutError, ConnectionError) as e:
