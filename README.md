@@ -92,6 +92,16 @@ This script will:
 - Handle `Ctrl+C` gracefully with a clean shutdown message.
 - Use the local JSON database `database/users.json` to store user sessions and other data.
 
+Alternatively, to run the bot directly without using `start_local.sh`, execute the following commands in your terminal:
+1. Activate the virtual environment:
+   ```bash
+   source .venv/bin/activate
+   ```
+2. Start the bot using Python in unbuffered mode:
+   ```bash
+   python3 -u bot.py
+   ```
+
 ---
 
 ## Bot Variables
