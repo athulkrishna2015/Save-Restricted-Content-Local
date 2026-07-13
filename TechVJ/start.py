@@ -94,7 +94,9 @@ async def upstatus(client, statusfile, message, chat):
 # progress writer
 def progress(current, total, message, type):
     with open(f'{message.id}{type}status.txt', "w") as fileup:
-        fileup.write(f"{current * 100 / total:.1f}%")
+        current_mb = current / (1024 * 1024)
+        total_mb = total / (1024 * 1024)
+        fileup.write(f"{current * 100 / total:.1f}% ({current_mb:.1f}MB / {total_mb:.1f}MB)")
 
 
 # start command
@@ -394,6 +396,7 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
     
     if os.path.exists(f'{message.id}upstatus.txt'): 
         os.remove(f'{message.id}upstatus.txt')
+    if file and os.path.exists(file):
         os.remove(file)
     await client.delete_messages(message.chat.id,[smsg.id])
 

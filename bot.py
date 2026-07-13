@@ -6,6 +6,16 @@ from dotenv import load_dotenv
 load_dotenv() # Load environment variables from .env file
 
 import asyncio
+import signal
+import sys
+
+def signal_handler(sig, frame):
+    print('\nStopping bot and exiting immediately...')
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 try:
     asyncio.get_event_loop()
 except RuntimeError:
