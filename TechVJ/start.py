@@ -307,6 +307,7 @@ async def batch_downloader(client: Client, acc, message: Message, fromID: int, t
 
         # Process the message with retries on network error, and infinite retry on FloodWait
         attempt = 1
+        is_network_down = False
         while attempt <= 3:
             if batch_temp.IS_BATCH.get(message.from_user.id) or uploader_state.get("should_break"):
                 break
@@ -353,6 +354,9 @@ async def batch_downloader(client: Client, acc, message: Message, fromID: int, t
                         "chat": chat,
                         "message": message
                     })
+                    if is_network_down:
+                        print("[Network] Connection restored.")
+                        is_network_down = False
                     break
 
                 smsg = await client.send_message(message.chat.id, f'**Downloading Msg ID {msgid}...**', reply_to_message_id=message.id)
@@ -393,6 +397,9 @@ async def batch_downloader(client: Client, acc, message: Message, fromID: int, t
                     "smsg": smsg,
                     "message": message
                 })
+                if is_network_down:
+                    print("[Network] Connection restored.")
+                    is_network_down = False
                 break
 
             except FloodWait as fw:
@@ -400,8 +407,10 @@ async def batch_downloader(client: Client, acc, message: Message, fromID: int, t
                 await asyncio.sleep(fw.value)
                 continue
             except (OSError, asyncio.TimeoutError, ConnectionError) as e:
+                if not is_network_down:
+                    print(f"[NetworkError] Connection lost: {e}. Retrying...")
+                    is_network_down = True
                 wait = attempt * 5
-                print(f"[NetworkError] Attempt {attempt}/3 on msg {msgid}: {e}. Retrying in {wait}s...")
                 if attempt == 3:
                     if ERROR_MESSAGE:
                         await client.send_message(message.chat.id, f"⚠️ Network error on msg `{msgid}` after 3 retries: `{e}`.\nBatch paused.", reply_to_message_id=message.id)
@@ -442,6 +451,7 @@ async def batch_uploader(client: Client, acc, message: Message, queue: asyncio.Q
         chat = item["chat"]
         
         uploaded = False
+        is_network_down = False
         while not uploaded:
             if batch_temp.IS_BATCH.get(message.from_user.id) or uploader_state.get("should_break"):
                 break
@@ -451,6 +461,9 @@ async def batch_uploader(client: Client, acc, message: Message, queue: asyncio.Q
                         uploaded = True
                         continue
                     await client.send_message(chat, msg.text, entities=msg.entities, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+                    if is_network_down:
+                        print("[Network] Connection restored.")
+                        is_network_down = False
                     uploaded = True
                     continue
 
@@ -490,11 +503,19 @@ async def batch_uploader(client: Client, acc, message: Message, queue: asyncio.Q
                     os.remove(ph_path)
                 
                 await client.delete_messages(message.chat.id, [smsg.id])
+                if is_network_down:
+                    print("[Network] Connection restored.")
+                    is_network_down = False
                 uploaded = True
 
             except FloodWait as fw:
                 print(f"[FloodWait] Sleeping {fw.value}s during upload of msg {msgid}")
                 await asyncio.sleep(fw.value)
+            except (OSError, asyncio.TimeoutError, ConnectionError) as e:
+                if not is_network_down:
+                    print(f"[NetworkError] Connection lost during upload of msg {msgid}: {e}. Retrying...")
+                    is_network_down = True
+                await asyncio.sleep(5)
             except Exception as e:
                 if str(e) == "Skipped by user":
                     print(f"[Skipped] Msg ID: {msgid} by user request (uploader)")
