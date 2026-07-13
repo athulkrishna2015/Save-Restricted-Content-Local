@@ -172,12 +172,18 @@ The bot saves the current batch progress to `database/resume_state.json` after e
 2. Send `/resume` to the bot on Telegram.
 3. The bot will tell you the exact message ID to resume from and show you the URL to resend.
 
+### Skip Current Message (Terminal Input)
+If a message is downloading slowly or hanging, you can skip it directly from your terminal:
+- Type `q` and press `Enter` in the terminal running the bot.
+- The bot will instantly abort the active download/upload, clean up partial caches, mark it as `[Skipped]`, and move to the next message ID without pausing the batch.
+
 ### Terminal Logging
-During batch processing, the terminal prints real-time progress so you always know where to resume:
+During batch processing, the terminal prints real-time progress, file types, and file sizes so you can monitor operations:
 ```
 [Processing] User: 123456789 | Msg ID: 1042 / 1100
+[Downloading] Msg ID: 1042 | Type: Video | Size: 48.7 MB
 [NetworkError] Attempt 1/3 on msg 1042: Connection reset. Retrying in 5s...
-[FloodWait] Sleeping 15s on msg 1043
+[Skipped] Msg ID: 1042 by user request
 [Done] User: 123456789 | Batch completed up to msg 1100
 ```
 

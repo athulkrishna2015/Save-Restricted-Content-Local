@@ -4,6 +4,8 @@
 
 import os
 import json
+import sys
+import threading
 import asyncio 
 import pyrogram
 from pyrogram import Client, filters, enums
@@ -13,6 +15,19 @@ from config import API_ID, API_HASH, ERROR_MESSAGE, LOGIN_SYSTEM, STRING_SESSION
 from database.db import db
 from TechVJ.strings import HELP_TXT
 from bot import TechVJUser
+
+# Stdin listener to skip current message by typing 'q'
+def terminal_input_listener():
+    while True:
+        try:
+            line = sys.stdin.readline()
+            if 'q' in line.lower():
+                print("\n[Input] 'q' detected. Skipping current message...")
+                batch_temp.SKIP_CURRENT = True
+        except Exception:
+            pass
+
+threading.Thread(target=terminal_input_listener, daemon=True).start()
 
 # ── Resume State Helpers ──────────────────────────────────────────────────────
 RESUME_FILE = "database/resume_state.json"
@@ -56,6 +71,7 @@ def clear_resume_state(user_id: int):
 
 class batch_temp(object):
     IS_BATCH = {}
+    SKIP_CURRENT = False
 
 async def downstatus(client, statusfile, message, chat):
     while True:
@@ -93,6 +109,8 @@ async def upstatus(client, statusfile, message, chat):
 
 # progress writer
 def progress(current, total, message, type):
+    if getattr(batch_temp, 'SKIP_CURRENT', False):
+        raise Exception("Skipped by user")
     with open(f'{message.id}{type}status.txt', "w") as fileup:
         current_mb = current / (1024 * 1024)
         total_mb = total / (1024 * 1024)
@@ -259,6 +277,10 @@ async def save(client: Client, message: Message):
                         await asyncio.sleep(wait)
                         attempt += 1
                 except Exception as e:
+                    if str(e) == "Skipped by user":
+                        print(f"[Skipped] Msg ID: {msgid} by user request")
+                        batch_temp.SKIP_CURRENT = False
+                        break
                     if ERROR_MESSAGE:
                         await client.send_message(message.chat.id, f"❌ Error on msg `{msgid}`: `{e}`.\nBatch paused. Use /resume to continue.", reply_to_message_id=message.id)
                     should_break = True
@@ -282,12 +304,44 @@ async def save(client: Client, message: Message):
             print(f"[Paused] User: {message.from_user.id} | Batch paused at msg {msgid}")
 
 
+def get_file_size(msg: Message):
+    try:
+        if msg.document: return msg.document.file_size
+    except: pass
+    try:
+        if msg.video: return msg.video.file_size
+    except: pass
+    try:
+        if msg.audio: return msg.audio.file_size
+    except: pass
+    try:
+        if msg.photo: return msg.photo.file_size
+    except: pass
+    try:
+        if msg.voice: return msg.voice.file_size
+    except: pass
+    try:
+        if msg.animation: return msg.animation.file_size
+    except: pass
+    try:
+        if msg.sticker: return msg.sticker.file_size
+    except: pass
+    return None
+
 # handle private
 async def handle_private(client: Client, acc, message: Message, chatid: int, msgid: int):
     msg: Message = await acc.get_messages(chatid, msgid)
     if msg.empty: return 
     msg_type = get_message_type(msg)
     if not msg_type: return 
+
+    size = get_file_size(msg)
+    if size:
+        size_mb = size / (1024 * 1024)
+        print(f"[Downloading] Msg ID: {msgid} | Type: {msg_type} | Size: {size_mb:.1f} MB")
+    else:
+        print(f"[Downloading] Msg ID: {msgid} | Type: {msg_type}")
+
     if CHANNEL_ID:
         try:
             chat = int(CHANNEL_ID)
@@ -305,7 +359,7 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         except Exception as e:
             if ERROR_MESSAGE == True:
                 await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-            return 
+            return  
 
     smsg = await client.send_message(message.chat.id, '**Downloading**', reply_to_message_id=message.id)
     asyncio.create_task(downstatus(client, f'{message.id}downstatus.txt', smsg, chat))
@@ -313,6 +367,8 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         file = await acc.download_media(msg, progress=progress, progress_args=[message,"down"])
         os.remove(f'{message.id}downstatus.txt')
     except Exception as e:
+        if str(e) == "Skipped by user":
+            raise e
         if ERROR_MESSAGE == True:
             await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML) 
         return await smsg.delete()
@@ -334,6 +390,8 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         try:
             await client.send_document(chat, file, thumb=ph_path, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])
         except Exception as e:
+            if str(e) == "Skipped by user":
+                raise e
             if ERROR_MESSAGE == True:
                 await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
         if ph_path != None: os.remove(ph_path)
@@ -348,6 +406,8 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         try:
             await client.send_video(chat, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])
         except Exception as e:
+            if str(e) == "Skipped by user":
+                raise e
             if ERROR_MESSAGE == True:
                 await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
         if ph_path != None: os.remove(ph_path)
@@ -356,6 +416,8 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         try:
             await client.send_animation(chat, file, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
         except Exception as e:
+            if str(e) == "Skipped by user":
+                raise e
             if ERROR_MESSAGE == True:
                 await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
         
@@ -363,6 +425,8 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         try:
             await client.send_sticker(chat, file, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
         except Exception as e:
+            if str(e) == "Skipped by user":
+                raise e
             if ERROR_MESSAGE == True:
                 await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)     
 
@@ -370,6 +434,8 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         try:
             await client.send_voice(chat, file, caption=caption, caption_entities=msg.caption_entities, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])
         except Exception as e:
+            if str(e) == "Skipped by user":
+                raise e
             if ERROR_MESSAGE == True:
                 await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
 
@@ -382,6 +448,8 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         try:
             await client.send_audio(chat, file, thumb=ph_path, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])   
         except Exception as e:
+            if str(e) == "Skipped by user":
+                raise e
             if ERROR_MESSAGE == True:
                 await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
         
@@ -390,7 +458,9 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
     elif "Photo" == msg_type:
         try:
             await client.send_photo(chat, file, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-        except:
+        except Exception as e:
+            if str(e) == "Skipped by user":
+                raise e
             if ERROR_MESSAGE == True:
                 await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
     
