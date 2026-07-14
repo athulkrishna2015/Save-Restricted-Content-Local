@@ -7,6 +7,7 @@ import json
 import sys
 import threading
 import asyncio 
+from datetime import datetime
 import pyrogram
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated, UserAlreadyParticipant, InviteHashExpired, UsernameNotOccupied
@@ -16,13 +17,16 @@ from database.db import db
 from TechVJ.strings import HELP_TXT
 from bot import TechVJUser
 
+def get_timestamp():
+    return datetime.now().strftime("[%d/%m/%y %I:%M:%S %p]")
+
 # Stdin listener to skip current message by typing 'q'
 def terminal_input_listener():
     while True:
         try:
             line = sys.stdin.readline()
             if 'q' in line.lower():
-                print("\n[Input] 'q' detected. Skipping current message...")
+                print(f"\n{get_timestamp()} [Input] 'q' detected. Skipping current message...")
                 batch_temp.SKIP_CURRENT = True
         except Exception:
             pass
@@ -267,9 +271,9 @@ async def save(client: Client, message: Message):
         batch_temp.IS_BATCH[message.from_user.id] = True
         if not should_break and not batch_temp.IS_BATCH.get(message.from_user.id):
             clear_resume_state(message.from_user.id)  # Batch done — clear saved state
-            print(f"[Done] User: {message.from_user.id} | Batch completed up to msg {toID}")
+            print(f"{get_timestamp()} [Done] User: {message.from_user.id} | Batch completed up to msg {toID}")
         else:
-            print(f"[Paused] User: {message.from_user.id} | Batch paused")
+            print(f"{get_timestamp()} [Paused] User: {message.from_user.id} | Batch paused")
 
 
 def get_file_size(msg: Message):
@@ -318,25 +322,25 @@ async def batch_downloader(client: Client, acc, message: Message, fromID: int, t
                 
                 msg: Message = await acc.get_messages(chatid, msgid)
                 if msg.empty:
-                    print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Empty message (Skipped)")
+                    print(f"{get_timestamp()} [Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Empty message (Skipped)")
                     break
                 
                 msg_type = get_message_type(msg)
                 if not msg_type:
-                    print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Unknown type (Skipped)")
+                    print(f"{get_timestamp()} [Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Unknown type (Skipped)")
                     break
 
                 size = get_file_size(msg)
                 if size:
                     size_mb = size / (1024 * 1024)
-                    print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Type: {msg_type} | Size: {size_mb:.1f} MB")
+                    print(f"{get_timestamp()} [Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Type: {msg_type} | Size: {size_mb:.1f} MB")
                     if MAX_FILE_SIZE > 0 and size_mb > MAX_FILE_SIZE:
-                        print(f"[Skipped] Msg ID: {msgid} | File size ({size_mb:.1f} MB) exceeds MAX_FILE_SIZE ({MAX_FILE_SIZE} MB)")
+                        print(f"{get_timestamp()} [Skipped] Msg ID: {msgid} | File size ({size_mb:.1f} MB) exceeds MAX_FILE_SIZE ({MAX_FILE_SIZE} MB)")
                         if ERROR_MESSAGE:
                             await client.send_message(message.chat.id, f"ℹ️ Msg ID `{msgid}` skipped: file size `{size_mb:.1f} MB` exceeds the `{MAX_FILE_SIZE} MB` limit.", reply_to_message_id=message.id)
                         break
                 else:
-                    print(f"[Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Type: {msg_type}")
+                    print(f"{get_timestamp()} [Processing] User: {message.from_user.id} | Msg ID: {msgid} / {toID} | Type: {msg_type}")
 
                 if CHANNEL_ID:
                     try:
@@ -398,17 +402,17 @@ async def batch_downloader(client: Client, acc, message: Message, fromID: int, t
                     "message": message
                 })
                 if is_network_down:
-                    print("[Network] Connection restored.")
+                    print(f"{get_timestamp()} [Network] Connection restored.")
                     is_network_down = False
                 break
 
             except FloodWait as fw:
-                print(f"[FloodWait] Sleeping {fw.value}s on msg {msgid}")
+                print(f"{get_timestamp()} [FloodWait] Sleeping {fw.value}s on msg {msgid}")
                 await asyncio.sleep(fw.value)
                 continue
             except (OSError, asyncio.TimeoutError, ConnectionError) as e:
                 if not is_network_down:
-                    print(f"[NetworkError] Connection lost: {e}. Retrying...")
+                    print(f"{get_timestamp()} [NetworkError] Connection lost: {e}. Retrying...")
                     is_network_down = True
                 wait = attempt * 5
                 if attempt == 3:
@@ -421,7 +425,7 @@ async def batch_downloader(client: Client, acc, message: Message, fromID: int, t
                     attempt += 1
             except Exception as e:
                 if str(e) == "Skipped by user":
-                    print(f"[Skipped] Msg ID: {msgid} by user request")
+                    print(f"{get_timestamp()} [Skipped] Msg ID: {msgid} by user request")
                     batch_temp.SKIP_CURRENT = False
                     break
                 if ERROR_MESSAGE:
@@ -462,7 +466,7 @@ async def batch_uploader(client: Client, acc, message: Message, queue: asyncio.Q
                         continue
                     await client.send_message(chat, msg.text, entities=msg.entities, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
                     if is_network_down:
-                        print("[Network] Connection restored.")
+                        print(f"{get_timestamp()} [Network] Connection restored.")
                         is_network_down = False
                     uploaded = True
                     continue
@@ -478,7 +482,7 @@ async def batch_uploader(client: Client, acc, message: Message, queue: asyncio.Q
                 asyncio.create_task(upstatus(client, f'{message.id}upstatus.txt', smsg, chat))
                 caption = msg.caption if msg.caption else None
 
-                print(f"[Uploading] Msg ID: {msgid} | Type: {msg_type}")
+                print(f"{get_timestamp()} [Uploading] Msg ID: {msgid} | Type: {msg_type}")
 
                 if "Document" == msg_type:
                     await client.send_document(chat, file, thumb=ph_path, caption=caption, reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML, progress=progress, progress_args=[message,"up"])
@@ -504,21 +508,21 @@ async def batch_uploader(client: Client, acc, message: Message, queue: asyncio.Q
                 
                 await client.delete_messages(message.chat.id, [smsg.id])
                 if is_network_down:
-                    print("[Network] Connection restored.")
+                    print(f"{get_timestamp()} [Network] Connection restored.")
                     is_network_down = False
                 uploaded = True
 
             except FloodWait as fw:
-                print(f"[FloodWait] Sleeping {fw.value}s during upload of msg {msgid}")
+                print(f"{get_timestamp()} [FloodWait] Sleeping {fw.value}s during upload of msg {msgid}")
                 await asyncio.sleep(fw.value)
             except (OSError, asyncio.TimeoutError, ConnectionError) as e:
                 if not is_network_down:
-                    print(f"[NetworkError] Connection lost during upload of msg {msgid}: {e}. Retrying...")
+                    print(f"{get_timestamp()} [NetworkError] Connection lost during upload of msg {msgid}: {e}. Retrying...")
                     is_network_down = True
                 await asyncio.sleep(5)
             except Exception as e:
                 if str(e) == "Skipped by user":
-                    print(f"[Skipped] Msg ID: {msgid} by user request (uploader)")
+                    print(f"{get_timestamp()} [Skipped] Msg ID: {msgid} by user request (uploader)")
                     batch_temp.SKIP_CURRENT = False
                 else:
                     if ERROR_MESSAGE:
