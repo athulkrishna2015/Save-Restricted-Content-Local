@@ -23,6 +23,21 @@ import logging
 # Silence Pyrogram reconnect warnings/info spam
 logging.getLogger("pyrogram").setLevel(logging.ERROR)
 
+# Monkey-patch Pyrogram TCP transport to prevent AttributeError in recv() on disconnect
+try:
+    import pyrogram.connection.transport.tcp.tcp as pyrogram_tcp
+    original_recv = pyrogram_tcp.TCP.recv
+    async def patched_recv(self, length: int = 0):
+        if self.reader is None:
+            return None
+        try:
+            return await original_recv(self, length)
+        except AttributeError:
+            return None
+    pyrogram_tcp.TCP.recv = patched_recv
+except Exception as e:
+    logging.error(f"Failed to monkey-patch Pyrogram TCP transport: {e}")
+
 def signal_handler(sig, frame):
     print('\nStopping bot and exiting immediately...')
     sys.exit(0)
