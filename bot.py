@@ -38,24 +38,16 @@ try:
 except Exception as e:
     logging.error(f"Failed to monkey-patch Pyrogram TCP transport: {e}")
 
-def signal_handler(sig, frame):
-    print('\nStopping bot and exiting immediately...')
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
+def _force_exit(sig_name):
+    print(f'\nReceived {sig_name}. Stopping bot immediately...')
+    os._exit(0)
 
 from pyrogram import Client
 from config import API_ID, API_HASH, BOT_TOKEN, STRING_SESSION, LOGIN_SYSTEM
 
 if STRING_SESSION is not None and LOGIN_SYSTEM == False:
-	TechVJUser = Client("TechVJ", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
-	TechVJUser.start()
+    TechVJUser = Client("TechVJ", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
+    TechVJUser.start()
 else:
     TechVJUser = None
 
@@ -72,20 +64,42 @@ class Bot(Client):
             sleep_threshold=5
         )
 
-      
     async def start(self):
-            
         await super().start()
         print('Bot Started Powered By @VJ_Bots')
 
     async def stop(self, *args):
-
         await super().stop()
         print('Bot Stopped Bye')
 
 if __name__ == "__main__":
-    bot = Bot()
-    bot.run()
+    import platform
+
+    async def main():
+        loop = asyncio.get_running_loop()
+
+        # Register SIGINT (Ctrl+C) and SIGTERM using the async-safe loop handler
+        if platform.system() != "Windows":
+            loop.add_signal_handler(signal.SIGINT, _force_exit, "SIGINT")
+            loop.add_signal_handler(signal.SIGTERM, _force_exit, "SIGTERM")
+
+        bot = Bot()
+        try:
+            await bot.start()
+            await asyncio.Event().wait()  # Run forever until interrupted
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        finally:
+            try:
+                await bot.stop()
+            except Exception:
+                pass
+            os._exit(0)
+
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        os._exit(0)
 
 # Don't Remove Credit Tg - @VJ_Bots
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
