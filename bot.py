@@ -16,6 +16,13 @@ for f in glob.glob("*status.txt"):
         pass
 
 import asyncio
+
+# Ensure event loop is created and set before importing any Pyrogram module
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 import signal
 import sys
 import logging
@@ -23,24 +30,17 @@ import logging
 # Silence Pyrogram reconnect warnings/info spam
 logging.getLogger("pyrogram").setLevel(logging.ERROR)
 
-# Monkey-patch Pyrogram TCP transport to prevent AttributeError in recv() on disconnect
-try:
-    import pyrogram.connection.transport.tcp.tcp as pyrogram_tcp
-    original_recv = pyrogram_tcp.TCP.recv
-    async def patched_recv(self, length: int = 0):
-        if self.reader is None:
-            return None
-        try:
-            return await original_recv(self, length)
-        except AttributeError:
-            return None
-    pyrogram_tcp.TCP.recv = patched_recv
-except Exception as e:
-    logging.error(f"Failed to monkey-patch Pyrogram TCP transport: {e}")
 
-def _force_exit(sig_name):
-    print(f'\nReceived {sig_name}. Stopping bot immediately...')
+
+# Register SIGINT (Ctrl+C) and SIGTERM at Python VM level — os._exit bypasses all asyncio/Pyrogram shutdown hooks
+def _force_exit(sig, frame):
+    print('\nStopping bot immediately...')
     os._exit(0)
+
+signal.signal(signal.SIGINT, _force_exit)
+signal.signal(signal.SIGTERM, _force_exit)
+
+
 
 from pyrogram import Client
 from config import API_ID, API_HASH, BOT_TOKEN, STRING_SESSION, LOGIN_SYSTEM
@@ -73,16 +73,7 @@ class Bot(Client):
         print('Bot Stopped Bye')
 
 if __name__ == "__main__":
-    import platform
-
     async def main():
-        loop = asyncio.get_running_loop()
-
-        # Register SIGINT (Ctrl+C) and SIGTERM using the async-safe loop handler
-        if platform.system() != "Windows":
-            loop.add_signal_handler(signal.SIGINT, _force_exit, "SIGINT")
-            loop.add_signal_handler(signal.SIGTERM, _force_exit, "SIGTERM")
-
         bot = Bot()
         try:
             await bot.start()
